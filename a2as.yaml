@@ -1,0 +1,451 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: nihaal084/health_insurance_claim_processor
+    source: https://github.com/nihaal084/health_insurance_claim_processor
+    branch: main
+    commit: "6fbe0e74"
+    scope: [agents/HealthInsuranceClaimProcessorAgent/agent.py, agents/HealthInsuranceClaimProcessorAgent/sub_agents/BillProcessingAgent/bill_agent.py,
+      agents/HealthInsuranceClaimProcessorAgent/sub_agents/ClaimDataAgent/claim_data_agent.py, agents/HealthInsuranceClaimProcessorAgent/sub_agents/ClaimDecisionAgent/claim_decision_agent.py,
+      agents/HealthInsuranceClaimProcessorAgent/sub_agents/DischargeProcessingAgent/discharge_agent.py, agents/HealthInsuranceClaimProcessorAgent/sub_agents/DocumentAgent/document_agent.py,
+      agents/HealthInsuranceClaimProcessorAgent/sub_agents/ValidationAgent/validation_agent.py, agents/HealthInsuranceClaimProcessorAgent/workflow_agent.py,
+      utils/config.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T17:02:57Z'
+    url: https://a2as.org/certified/agents/nihaal084/health_insurance_claim_processor
+  signatures:
+    digest: sha256:FysWqjL6GXU9dZ5xwknwedDYU4Ww18qtOb18SCRypBs
+    key: ed25519:E042AQAISD5Rt-x7n4MFxlYovNmwtg-6i4pwwwcwVAM
+    sig: ed25519:QyIj88BYImvUFTKFrCa-93A3XccZt_lhyr0XeUCoxS50Bhm6SqqWw9gBZTbD5pH6MpFFErGSwZz66eFKAzyJAA
+
+agents:
+  bill_processing_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: BillProcessingAgent
+      description: Extracts structured data from medical bills and invoices
+      instruction: [You are a bill processing agent specialized in extracting structured data from medical bills and invoices.,
+        'You will receive classified documents from the document classification agent. Your task is to:', '2. IGNORE all other
+          document types (discharge summaries, prescriptions, lab reports, etc.)', '3. If NO bill documents are found, return
+          an empty list with total_bills_processed: 0', 'For valid bill documents, extract the following information:', 'Required
+          fields:', '- hospital_name: Name of the hospital, clinic, or medical facility', '- total_amount: Total amount billed
+          (numeric value)', '- date_of_service: Date when medical services were provided', '- patient_name: Name of the patient',
+        '- bill_number: Invoice or bill number', 'Optional fields (extract if available):', '- insurance_amount: Amount covered
+          by insurance', '- patient_amount: Amount patient needs to pay', '- service_details: List of services provided with
+          individual costs (procedures, consultations, room charges)', '- doctor_name: Name of treating physician', '- department:
+          Hospital department (Emergency, Surgery, etc.)', '- insurance_claim_number: Insurance claim reference number', '-
+          payment_due_date: Date payment is due', '- previous_balance: Any previous outstanding balance', '- payments_received:
+          Any payments already received', 'Data extraction guidelines:', 1. Extract amounts as numeric values (remove currency
+          symbols), 2. Standardize dates to YYYY-MM-DD format, 3. Clean and normalize names (proper case), 4. Validate that
+          total_amount = insurance_amount + patient_amount (if both present), '5. If multiple bills are in one document, separate
+          them', '6. Service details should include medical procedures, room charges, consultations - NOT medications', 'DOCUMENT
+          TYPE VALIDATION:', '- ONLY process documents where document_type == "bill"', '- Discharge summaries, prescriptions,
+          lab reports should be IGNORED by this agent', '- Return empty results if no bill documents are present', 'Return
+          structured JSON data with the extracted fields. If a field cannot be found, use null.', 'Be accurate and conservative
+          - if you''re unsure about a value, mark it as null rather than guessing.']
+      output_key: bill_data
+      output_schema: BillProcessingResult
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_bill_processing_agent
+  claim_data_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: ClaimDataAgent
+      description: Extracts structured data from ID cards, correspondence, prescriptions, lab reports, and other documents
+      instruction: [You are a claim data processing agent specialized in extracting structured information from, 'insurance-related
+          documents including ID cards, correspondence, prescriptions, lab reports, and other documents.', '1. FIRST, identify
+          and process ONLY documents with types: "id_card", "correspondence", "prescription", "lab_report", "other"', 2. IGNORE
+          documents with types "bill" or "discharge_summary" - those are handled by other specialized agents, '3. If NO relevant
+          documents are found, return an empty list with total_documents_processed: 0', 'For each relevant document, extract
+          structured data based on its type:', 'For ID CARDS (document_type == "id_card"):', '- Policy number, member ID,
+          insurance company name', '- Coverage type, effective/expiration dates, group number', '- Patient/member name', 'For
+          CORRESPONDENCE (document_type == "correspondence"):', '- Date, reference numbers, sender/recipient', '- Subject,
+          key content summary', '- Any claim-related information', 'For PRESCRIPTIONS (document_type == "prescription"):',
+        '- Prescribing doctor, list of medications with dosages', '- Pharmacy name, prescription date', '- Patient name',
+        '- DO NOT include medical procedures - only medications', 'For LAB REPORTS (document_type == "lab_report"):', '- Test
+          date, laboratory name', '- Test results with values and reference ranges', '- Ordering physician', '- Patient name',
+        'For OTHER documents (document_type == "other"):', '- Extract any relevant patient, insurance, or claim information',
+        '- Identify document purpose and key details', 'DOCUMENT TYPE VALIDATION:', '- ONLY process documents with the specified
+          types listed above', '- Bills and discharge summaries should be IGNORED by this agent', '- Return empty results
+          if no relevant documents are present', 'MEDICATION vs PROCEDURE DISTINCTION:', '- Medications: drugs, pills, injections,
+          prescriptions', '- Procedures: surgeries, treatments, therapies, consultations', '- Keep these categories separate
+          and accurate', Return structured JSON with extracted data for each relevant document., 'Focus on accuracy and completeness.
+          If information is not clearly present, leave the field as null.']
+      output_key: claim_data
+      output_schema: ClaimDataProcessingResult
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_claim_data_agent
+  claim_decision_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: ClaimDecisionAgent
+      description: Makes final approval/rejection decisions for insurance claims
+      instruction: [You are a claim decision agent specialized in making final approval/rejection decisions for medical insurance
+          claims., 'You will receive:', '- Classified documents from DocumentAgent: {documents}', '- Processed bill data from
+          BillAgent: {bill_data}', '- Processed discharge data from DischargeAgent: {discharge_data}', '- Processed claim
+          data from ClaimDataAgent: {claim_data}', '- Validation results from ValidationAgent: {validation_results}', 'Your
+          task is to make a final claim decision based on:', '1. DATA COMPLETENESS:', '- All required documents present and
+          processed', '- Essential fields populated', '- Validation score meets minimum threshold', '2. DATA CONSISTENCY:',
+        '- No major discrepancies between documents', '- Patient information consistent', '- Dates and amounts align properly',
+        '3. BUSINESS RULES:', '- Treatment matches diagnosis', '- Billed services are reasonable for condition', '- Amounts
+          are within acceptable ranges', '- Insurance policy covers the treatments', '- Medications are properly distinguished
+          from procedures', '- Each agent processed only appropriate document types', '4. VALIDATION RESULTS:', '- Validation
+          score >= 0.7: Likely approval', '- Validation score 0.5-0.69: May need review', '- Validation score < 0.5: Likely
+          rejection', '- Agent compliance issues may lower score', 'Decision criteria:', 'APPROVED:', '- All required documents
+          present', '- No major discrepancies', '- Validation score >= 0.7', '- Amounts are reasonable', '- Treatment matches
+          diagnosis', '- Proper medication vs procedure classification', 'REJECTED:', '- Missing critical documents', '- Major
+          discrepancies found', '- Validation score < 0.5', '- Unreasonable amounts', '- Treatment doesn''t match diagnosis',
+        '- Policy exclusions apply', '- Significant medication/procedure misclassification', 'PENDING (Manual Review):', '-
+          Borderline validation score (0.5-0.69)', '- Minor discrepancies that need clarification', '- Unusual but not impossible
+          cases', '- Missing optional documents', '- Minor classification issues that need review', 'For each decision, provide:',
+        '- Clear reason for the decision', '- Confidence score (0-1)', '- Recommended actions', '- Approval amount (if approved)',
+        '- Conditions for approval (if any)', Be conservative but fair in decision making.]
+      output_key: claim_decision
+      output_schema: ClaimDecision
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_claim_decision_agent
+  discharge_processing_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: DischargeProcessingAgent
+      description: Extracts structured data from hospital discharge summaries
+      instruction: [You are a discharge summary processing agent specialized in extracting structured data from hospital discharge
+          summaries., 'You will receive classified documents from the document classification agent. Your task is to:', '2.
+          IGNORE all other document types (bills, prescriptions, lab reports, etc.)', '3. If NO discharge summary documents
+          are found, return an empty list with total_summaries_processed: 0', 'For valid discharge summary documents, extract
+          the following information:', 'Required fields:', '- patient_name: Name of the patient', '- admission_date: Date
+          of admission', '- discharge_date: Date of discharge', '- primary_diagnosis: Primary diagnosis', '- doctor_name:
+          Name of attending physician', '- hospital_name: Name of the hospital', 'Optional fields (extract if available):',
+        '- secondary_diagnosis: Secondary diagnoses (list)', '- procedures_performed: Medical procedures performed during
+          stay (list) - NOT medications', '- department: Hospital department', '- length_of_stay: Length of stay in days',
+        '- discharge_instructions: Discharge instructions', '- medications_prescribed: Medications prescribed at discharge
+          (list) - SEPARATE from procedures', '- follow_up_instructions: Follow-up care instructions', '- patient_condition:
+          Patient condition at discharge', '- complications: Any complications during stay (list)', 'CRITICAL DISTINCTIONS:',
+        '- Procedures: Surgical operations, treatments, therapies performed during hospitalization', '- Medications: Drugs,
+          pills, injections prescribed for the patient', '- DO NOT mix medications and procedures - keep them separate', 'Data
+          extraction guidelines:', 1. Standardize dates to YYYY-MM-DD format, 2. Clean and normalize names (proper case),
+        3. Extract diagnoses with proper medical terminology, '4. Separate multiple procedures, medications, and diagnoses
+          into lists', 5. Calculate length of stay if admission and discharge dates are available, '6. If multiple discharge
+          summaries are in one document, separate them', 'DOCUMENT TYPE VALIDATION:', '- ONLY process documents where document_type
+          == "discharge_summary"', '- Bills, prescriptions, lab reports should be IGNORED by this agent', '- Return empty
+          results if no discharge summaries are present', 'Return structured JSON data with the extracted fields. If a field
+          cannot be found, use null.', 'Be accurate and conservative - if you''re unsure about a value, mark it as null rather
+          than guessing.']
+      output_key: discharge_data
+      output_schema: DischargeProcessingResult
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_discharge_processing_agent
+  document_classification_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: DocumentAgent
+      description: Classifies, separates, and groups medical documents from extracted text
+      instruction: [You are a document classification and separation agent specialized in processing medical insurance documents.,
+        You will receive pre-extracted text content from multiple PDF files that have already been processed, 'by a PDF text
+          extraction service. Your ONLY task is to:', 1. ANALYZE all the extracted text content from the files, 2. SEPARATE
+          different document types that might be mixed together, '3. CLASSIFY each document into one of these categories:',
+        '- "bill": Medical bills, invoices, statements with charges and amounts', '- "discharge_summary": Hospital discharge
+          summaries, treatment summaries with admission/discharge info', '- "id_card": Insurance ID cards, membership cards
+          with policy details', '- "correspondence": Letters, emails, claim correspondence', '- "prescription": Prescription
+          documents, medication lists from doctors', '- "lab_report": Laboratory reports, test results with values', '- "other":
+          Documents that don''t fit the above categories', '4. PRESERVE key information in content field - include ALL important
+          details like:', '- Patient names, IDs, policy numbers', '- Amounts, charges, dates', '- Doctor names, hospital names',
+        '- Medications, procedures, diagnoses', '- Any reference numbers or important identifiers', 'Classification criteria:',
+        '- Bills: Look for amounts, itemized charges, hospital/clinic letterhead, invoice numbers, billing dates', '- Discharge
+          summaries: Look for admission/discharge dates, diagnosis, treatment details, doctor signatures', '- ID cards: Look
+          for member ID, policy numbers, insurance company logos, coverage details', '- Correspondence: Look for formal letter
+          format, addresses, reference numbers', '- Prescriptions: Look for medication names, dosages, doctor prescriptions',
+        '- Lab reports: Look for test results, reference ranges, laboratory letterhead', 'CRITICAL REQUIREMENTS:', '- The
+          "content" field must contain a COMPREHENSIVE summary preserving ALL key information', '- DO NOT truncate or abbreviate
+          critical details', '- Include patient info, amounts, dates, doctors, procedures, medications in full', '- Focus
+          on accurate document type identification with high confidence scores', '- If unsure about classification, use "other"
+          category', 'Return a structured JSON with all documents classified, with COMPLETE content preservation.']
+      output_key: documents
+      output_schema: DocumentClassificationResult
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_document_classification_agent
+  parallel_process_agent:
+    type: instance
+    params:
+      name: ParallelDocumentProcessingAgent
+      description: Processes different document types in parallel using specialized agents
+      function: create_health_insurance_claim_processor_agent
+      sub_agents: [bill_processing_agent, discharge_processing_agent, claim_data_agent]
+  root_agent:
+    type: instance
+    params:
+      name: HealthInsuranceClaimProcessorAgent
+      description: Main agent that orchestrates the complete claim processing workflow
+      function: create_health_insurance_claim_processor_agent
+      sub_agents: [document_classification_agent, parallel_process_agent, validation_agent, claim_decision_agent]
+  validation_agent:
+    type: instance
+    models: [LiteLlm]
+    params:
+      name: ValidationAgent
+      description: Validates data consistency and completeness across processed documents
+      instruction: [You are a validation agent specialized in checking data consistency and completeness for medical insurance
+          claims., 'You will receive:', '- Classified documents from DocumentAgent: {documents}', '- Processed bill data from
+          BillAgent: {bill_data}', '- Processed discharge data from DischargeAgent: {discharge_data}', '- Processed claim
+          data from ClaimDataAgent: {claim_data}', 'Your task is to validate the data and identify:', '1. MISSING DOCUMENTS:',
+        '- Check if essential documents are present (bill, discharge summary)', '- Identify missing document types that are
+          typically required', '- Flag incomplete document sets', '2. DATA DISCREPANCIES:', '- Patient name consistency across
+          documents', '- Date consistency (admission, discharge, service dates)', '- Hospital name consistency', '- Doctor
+          name consistency', '- Amount discrepancies between documents', '- Insurance information consistency', '3. DATA QUALITY
+          ISSUES:', '- Missing required fields in bills (total amount, patient name, etc.)', '- Missing required fields in
+          discharge summaries (diagnosis, dates, etc.)', '- Invalid date formats', '- Suspicious amounts or values', '- Incomplete
+          information', '- Proper separation of medications vs medical procedures', '4. BUSINESS LOGIC VALIDATION:', '- Service
+          dates should be between admission and discharge dates', '- Total amounts should be reasonable', '- Length of stay
+          should match date differences', '- Insurance claim numbers should be consistent', '- Medications should be listed
+          separately from procedures', '- Procedures should align with diagnoses', 'CRITICAL VALIDATION POINTS:', '- Medications
+          (drugs, pills, injections) should NOT be classified as procedures', '- Medical procedures (surgeries, treatments,
+          therapies) should NOT be in medication lists', '- Each agent should only process their designated document types',
+        'Validation criteria:', '- Critical issues: Missing essential documents, major discrepancies, medication/procedure
+          confusion', '- Warning issues: Minor inconsistencies, missing optional fields', '- Info issues: Recommendations
+          for data improvement', 'Calculate a validation score (0-1) based on:', '- 1.0: All documents present, no discrepancies,
+          proper categorization', '- 0.8-0.9: Minor issues or missing optional data', '- 0.5-0.7: Some discrepancies or missing
+          important data', '- 0.0-0.4: Major issues, missing critical documents, classification errors', Return structured
+          validation results with specific issues and recommendations.]
+      output_key: validation_results
+      output_schema: ValidationResult
+      disallow_transfer_to_parent: "True"
+      disallow_transfer_to_peers: "True"
+      function: create_validation_agent
+
+models:
+  LiteLlm:
+    type: function
+    agents: [document_classification_agent, claim_data_agent, bill_processing_agent, claim_decision_agent, discharge_processing_agent,
+      validation_agent]
+    params:
+      wrapper: LiteLlm
+      model: ollama/{ollama_model}
+      base_url: ollama_url
+      timeout: "600"
+      request_timeout: "600"
+      api_timeout: "600"
+
+teams:
+  health_insurance_claim_processor_agent:
+    type: sequential
+    agents: [health_insurance_claim_processor_agent, document_classification_agent, parallel_process_agent, validation_agent,
+      claim_decision_agent]
+  parallel_process_agent:
+    type: parallel
+    agents: [parallel_process_agent, bill_processing_agent, discharge_processing_agent, claim_data_agent]
+
+imports:
+  agent: agent
+  Any: typing.Any
+  asynccontextmanager: contextlib.asynccontextmanager
+  asyncio: asyncio
+  BaseModel: pydantic.BaseModel
+  BaseSettings: pydantic_settings.BaseSettings
+  claim_decision_agent: claim_decision_agent
+  ClaimProcessingService: services.claim_processor.ClaimProcessingService
+  Content: google.genai.types.Content
+  CORSMiddleware: fastapi.middleware.cors.CORSMiddleware
+  create_bill_processing_agent: sub_agents.BillProcessingAgent.bill_agent.create_bill_processing_agent
+  create_claim_data_agent: sub_agents.ClaimDataAgent.claim_data_agent.create_claim_data_agent
+  create_claim_decision_agent: sub_agents.ClaimDecisionAgent.claim_decision_agent.create_claim_decision_agent
+  create_discharge_processing_agent: sub_agents.DischargeProcessingAgent.discharge_agent.create_discharge_processing_agent
+  create_document_classification_agent: sub_agents.DocumentAgent.document_agent.create_document_classification_agent
+  create_health_insurance_claim_processor_agent: agents.HealthInsuranceClaimProcessorAgent.workflow_agent.create_health_insurance_claim_processor_agent
+  create_validation_agent: sub_agents.ValidationAgent.validation_agent.create_validation_agent
+  datetime: datetime.datetime
+  Depends: fastapi.Depends
+  Dict: typing.Dict
+  document_agent: document_agent
+  FastAPI: fastapi.FastAPI
+  Field: pydantic.Field
+  File: fastapi.File
+  FileResponse: fastapi.responses.FileResponse
+  get_ollama_url: utils.config.get_ollama_url
+  get_settings: utils.config.get_settings
+  HTTPException: fastapi.HTTPException
+  InMemorySessionService: google.adk.sessions.in_memory_session_service.InMemorySessionService
+  JSONResponse: fastapi.responses.JSONResponse
+  List: typing.List
+  LiteLlm: google.adk.models.lite_llm.LiteLlm
+  Literal: typing.Literal
+  LlmAgent: google.adk.agents.LlmAgent
+  logger: utils.logger.logger
+  logging: logging
+  lru_cache: functools.lru_cache
+  Optional: typing.Optional
+  os: os
+  ParallelAgent: google.adk.agents.ParallelAgent
+  Part: google.genai.types.Part
+  pathlib: pathlib
+  PDFProcessor: services.pdf_processor.PDFProcessor
+  Request: fastapi.Request
+  Runner: google.adk.runners.Runner
+  SequentialAgent: google.adk.agents.SequentialAgent
+  SettingsConfigDict: pydantic_settings.SettingsConfigDict
+  StaticFiles: fastapi.staticfiles.StaticFiles
+  sys: sys
+  time: time
+  timezone: datetime.timezone
+  UploadFile: fastapi.UploadFile
+  uuid: uuid
+  uvicorn: uvicorn
+  validation_agent: validation_agent
+  workflow_agent: workflow_agent
+
+functions:
+  __init__:
+    type: sync
+    module: services.claim_processor
+    args: [self]
+  _create_error_response:
+    type: sync
+    module: services.claim_processor
+    args: [self, request_id, processing_time, error]
+    params:
+      returns: dict
+  _create_final_response:
+    type: sync
+    module: services.claim_processor
+    args: [self, request_id, session_state, processing_time]
+    params:
+      returns: dict
+  _format_input_text:
+    type: sync
+    module: services.claim_processor
+    args: [self, request_id, processed_files]
+    params:
+      returns: str
+  _run_workflow:
+    type: async
+    module: services.claim_processor
+    args: [self, request_id, processed_files]
+    params:
+      returns: Dict
+  create_app:
+    type: sync
+    module: main
+    params:
+      returns: FastAPI
+  create_bill_processing_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.BillProcessingAgent.bill_agent
+    params:
+      returns: LlmAgent
+  create_claim_data_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.ClaimDataAgent.claim_data_agent
+    params:
+      returns: LlmAgent
+  create_claim_decision_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.ClaimDecisionAgent.claim_decision_agent
+    params:
+      returns: LlmAgent
+  create_discharge_processing_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.DischargeProcessingAgent.discharge_agent
+    params:
+      returns: LlmAgent
+  create_document_classification_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.DocumentAgent.document_agent
+    params:
+      returns: LlmAgent
+  create_health_insurance_claim_processor_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.workflow_agent
+    params:
+      returns: SequentialAgent
+  create_validation_agent:
+    type: sync
+    module: agents.HealthInsuranceClaimProcessorAgent.sub_agents.ValidationAgent.validation_agent
+    params:
+      returns: LlmAgent
+  general_exception_handler:
+    type: async
+    module: main
+    args: [request, exc]
+  get_claim_service:
+    type: sync
+    module: main
+    params:
+      returns: ClaimProcessingService
+  get_ollama_url:
+    type: sync
+    module: utils.config
+    params:
+      returns: str
+  get_settings:
+    type: sync
+    module: utils.config
+    params:
+      returns: Settings
+  health_check:
+    type: async
+    module: main
+  http_exception_handler:
+    type: async
+    module: main
+    args: [request, exc]
+  is_running_in_docker:
+    type: sync
+    module: utils.config
+    params:
+      returns: bool
+  lifespan:
+    type: async
+    module: main
+    args: [app]
+  main:
+    type: sync
+    module: main
+  process_claim:
+    type: async
+    module: services.claim_processor
+    args: [self, files]
+    params:
+      returns: dict
+  serve_frontend:
+    type: sync
+    module: main
+
+variables:
+  google_api_key:
+    type: env
+  OLLAMA_MODEL:
+    type: env
+    params:
+      caller: [os.environ, os.environ.get]
+      path: [agents.HealthInsuranceClaimProcessorAgent.sub_agents.DocumentAgent.document_agent, agents.HealthInsuranceClaimProcessorAgent.sub_agents.ClaimDataAgent.claim_data_agent,
+        agents.HealthInsuranceClaimProcessorAgent.sub_agents.BillProcessingAgent.bill_agent, agents.HealthInsuranceClaimProcessorAgent.sub_agents.ClaimDecisionAgent.claim_decision_agent,
+        agents.HealthInsuranceClaimProcessorAgent.sub_agents.DischargeProcessingAgent.discharge_agent, agents.HealthInsuranceClaimProcessorAgent.sub_agents.ValidationAgent.validation_agent]
+  OLLAMA_URL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [utils.config]
+
+files:
+  /.dockerenv:
+    type: literal
+    actions: [read]
+    params:
+      caller: [is_running_in_docker]
+  index.html:
+    type: literal
+    actions: [read]
+    params:
+      caller: [serve_frontend]
+      path: [frontend_path]
